@@ -1,0 +1,18 @@
+# 仮想環境を無視
+llmagent/
+venv/
+.venv/
+
+# Pythonのキャッシュファイルを無視
+__pycache__/
+*.pyc
+
+# Macのシステムファイルを無視
+.DS_Store
+
+# APIキーなどの秘密情報を無視
+.env
+token.json
+credentials.json
+key.json
+client_secret.json

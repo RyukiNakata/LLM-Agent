@@ -1,0 +1,9 @@
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
+GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
+GOOGLE_CALENDAR_CREDENTIALS_JSON = os.getenv("GOOGLE_CALENDAR_CREDENTIALS_JSON")

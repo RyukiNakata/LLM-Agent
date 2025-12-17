@@ -1,0 +1,12 @@
+langchain
+langchain-community
+openai
+google-api-python-client
+google-auth
+google-auth-oauthlib
+python-dotenv
+fastapi
+uvicorn
+python-dotenv
+line-bot-sdk
+requests
