@@ -11,7 +11,7 @@ CO2_API_URL = "https://h3sit82de1.execute-api.ap-northeast-1.amazonaws.com/lates
 
 # 2. 生体データ用 (心拍, SpO2) - 新規API
 # ※ Step 6で取得したURLに書き換えてください
-HEART_API_URL = "https://xxxxxx.execute-api.ap-northeast-1.amazonaws.com/prod/heartrate"
+HEART_API_URL = "https://nsl9csy4ni.execute-api.ap-northeast-1.amazonaws.com/prod/data"
 
 # ==========================================================
 
