@@ -8,20 +8,29 @@ from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 
-# 既存ツール関数（あなたのプロジェクトのまま）
+# 既存ツール関数
 from tools.weather_tool import get_weather
 from tools.calendar_tool import create_calendar_event_natural, get_calendar_events
 from tools.temp_tool import get_temperature_by_date
 from tools.humidity_tool import get_humidity_by_date
 from tools.ac_tool import control_aircon
 from tools.humidifier_tool import control_humidifier
-from tools.co2_tool import get_co2_concentration
 from tools.date_tool import get_current_datetime
+
+# ★追加：場所別のセンサーツール（すでに @tool 化されているためそのまま使います）
+from tools.sensor_tool import (
+    get_home_environment,
+    get_lab_environment,
+    get_home_heart_rate,
+    get_lab_heart_rate
+)
+
+# 旧CO2ツールは新しいツール(get_home_co2など)に置き換えるためコメントアウト
+# from tools.co2_tool import get_co2_concentration
 
 
 # ------------------------------------------------------------
-# 1 Toolラッパ（LangChain v1では @tool で登録するのが安定）
-#    既存関数をそのまま呼び出す薄いラッパにする
+# 1 Toolラッパ（既存の関数を @tool でラップ）
 # ------------------------------------------------------------
 
 @tool
@@ -51,18 +60,13 @@ def tool_create_calendar_event_natural(text: str) -> str:
 
 @tool
 def tool_control_aircon(command: str) -> str:
-    """エアコンを制御するツール．例：『on 24 cool』など（あなたの実装仕様に合わせる）"""
+    """エアコンを制御するツール．例：『on 24 cool』など"""
     return control_aircon(command)
 
 @tool
 def tool_control_humidifier(command: str) -> str:
-    """加湿器を制御するツール．例：『on』／『off』／『auto』など（あなたの実装仕様に合わせる）"""
+    """加湿器を制御するツール．例：『on』／『off』など"""
     return control_humidifier(command)
-
-@tool
-def tool_get_co2_concentration(_: str = "") -> str:
-    """二酸化炭素濃度を取得するツール．引数不要だがtool都合でダミー引数を許可．"""
-    return get_co2_concentration()
 
 @tool
 def tool_get_current_datetime(_: str = "") -> str:
@@ -70,6 +74,9 @@ def tool_get_current_datetime(_: str = "") -> str:
     return get_current_datetime()
 
 
+# ------------------------------------------------------------
+# 登録ツールリスト (TOOLS)
+# ------------------------------------------------------------
 TOOLS = [
     tool_get_weather,
     tool_get_temperature_by_date,
@@ -78,18 +85,21 @@ TOOLS = [
     tool_create_calendar_event_natural,
     tool_control_aircon,
     tool_control_humidifier,
-    tool_get_co2_concentration,
     tool_get_current_datetime,
+    # ★ここに追加（これらは tools/sensor_tool.py 内で既に @tool が付いています）
+    get_home_environment,
+    get_lab_environment,
+    get_home_heart_rate,
+    get_lab_heart_rate,
 ]
 
 
 # ------------------------------------------------------------
-# 2 プロンプト（few-shotを system_prompt に埋め込む）
-#    v1では「SystemMessageを渡す」より system_prompt 文字列が扱いやすい
+# 2 プロンプト
 # ------------------------------------------------------------
 
 FEW_SHOT = """
-以下はユーザーの質問と，ツール利用の例です（内部的にはツールを呼び出して回答する）．
+以下はユーザーの質問と，ツール利用の例です．
 
 例1：
 ユーザー：明日の天気を教えて
@@ -97,20 +107,23 @@ FEW_SHOT = """
 最終回答：明日の岡山は晴れの予報です．
 
 例2：
-ユーザー：今日の14時から15時会議を追加して
-行動：tool_get_current_datetime()
-行動：tool_create_calendar_event_natural(text="今日の14時から15時 会議を追加")
-最終回答：14時から15時の会議を追加しました．
+ユーザー：自宅の空気が悪いか確認して
+行動：get_home_co2()
+最終回答：【2025-12-17 10:00 時点】自宅のCO2濃度: 800 ppm です。まだ換気の必要はありません。
+
+例3：
+ユーザー：研究室に誰かいる？
+行動：get_lab_heart_rate()
+最終回答：【2025-12-17 10:05 時点】研究室での心拍数: 75 bpm です。誰かが在室しているようです。
 """.strip()
 
 
 def _build_agent(mode: str = "zero"):
 
-    # .env を使う場合（OPENAI_API_KEY）
     load_dotenv()
 
     llm = ChatOpenAI(
-        model=os.environ.get("OPENAI_MODEL", "gpt-4.1"),
+        model=os.environ.get("OPENAI_MODEL", "gpt-4"), # モデル名は適宜環境に合わせてください
         temperature=0,
     )
 
@@ -121,11 +134,9 @@ def _build_agent(mode: str = "zero"):
             "ユーザー入力に対し，必要なツールを呼び出した上で，日本語で簡潔に最終回答のみ返してください．"
         )
     elif mode == "react":
-        # ReAct“風”に「段階的に」進める指示はできるが，
-        # v1では思考文の出力を強制しないのが安全（モデルに内部推論させる）．
         system_prompt = (
             "あなたは家庭内アシスタントです．ユーザー要求を満たすために必要ならツールを複数回使ってください．"
-            "カレンダー操作，環境取得（温湿度CO2），機器制御（エアコン，加湿器）を統合して支援します．"
+            "カレンダー操作，環境取得（温湿度CO2），機器制御（エアコン，加湿器），生体情報（心拍）を統合して支援します．"
             "最終回答は日本語で簡潔に，結論と実行内容を含めてください．\n\n"
             f"{FEW_SHOT}"
         )
@@ -139,13 +150,10 @@ def _build_agent(mode: str = "zero"):
 
 
 # ------------------------------------------------------------
-# 3 実行関数（zero／few／react）＋ ツール呼び出しログ抽出
+# 3 実行関数
 # ------------------------------------------------------------
 
 def _extract_tool_logs(state: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """
-    create_agent().invoke() の戻り値 state から，tool_calls を抽出する簡易ログ．
-    """
     logs: List[Dict[str, Any]] = []
     msgs = state.get("messages", [])
     for m in msgs:
@@ -177,5 +185,4 @@ def run_react_few_shot(query: str) -> Tuple[str, List[Dict[str, Any]]]:
 
 
 def run_agent(query: str) -> Union[str, Tuple[str, List[Dict[str, Any]]]]:
-    # デフォルト：react風＋few-shot
     return run_react_few_shot(query)
