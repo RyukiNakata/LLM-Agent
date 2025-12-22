@@ -56,7 +56,14 @@ def tool_create_calendar_event_natural(text: str) -> str:
 
 @tool
 def tool_control_aircon(command: str) -> str:
-    """エアコンを制御するツール．例：『on 24 cool』など（あなたの実装仕様に合わせる）"""
+    """
+    エアコンを操作するツール。
+    引数 command には以下のいずれかのみを指定する：
+    - 'cool': 冷房を入れる場合
+    - 'warm': 暖房を入れる場合
+    - 'off': 停止する場合
+    - 'auto': 温度に合わせて自動で判断してほしい場合
+    """
     return control_aircon(command)
 
 @tool

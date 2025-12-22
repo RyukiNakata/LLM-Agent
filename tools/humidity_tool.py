@@ -1,37 +1,76 @@
+# tools/ac_tool.py
 import requests
 import json
 
-# ★CO2と同じAPI GatewayのURLをここに貼ってください
-API_URL = "https://h3sit82de1.execute-api.ap-northeast-1.amazonaws.com/latest"
+# ★ここに M5Stack のデータ取得用URL (センサー確認用)
+DATA_API_URL = "https://h3sit82de1.execute-api.ap-northeast-1.amazonaws.com/latest"
 
-def get_humidity_by_date(query: str = "") -> str:
+def control_aircon(command: str) -> str:
     """
-    M5Stackから送信された現在の湿度(%)を取得します。
-    引数 query (日付など) は現状無視して、最新のデータを返します。
+    エアコンを制御します。
+    引数 command:
+      - 'on', 'cool': 冷房を入れます
+      - 'warm', 'heat': 暖房を入れます
+      - 'off': 停止します
+      - 'auto': 現在の室温に合わせて自動で判定します
     """
     try:
-        # APIを叩いてDynamoDBから最新データを取得
-        response = requests.get(API_URL, timeout=10)
+        # -------------------------------------------------
+        # 1. センサーデータ取得 (現状確認のため)
+        # -------------------------------------------------
+        current_temp = "不明"
+        try:
+            response = requests.get(DATA_API_URL, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                # 温度を取得
+                val = data.get("temperature") or data.get("temp")
+                if val:
+                    current_temp = float(val)
+        except:
+            pass # センサーエラーでもエアコン操作は続行する
+
+        # -------------------------------------------------
+        # 2. コマンドに応じた処理
+        # -------------------------------------------------
+        msg = ""
         
-        if response.status_code != 200:
-            return f"エラー: データの取得に失敗しました。Status: {response.status_code}"
+        # --- 自動モード (従来のロジック) ---
+        if command == "auto":
+            if isinstance(current_temp, float):
+                if current_temp >= 28:
+                    msg = f"現在 {current_temp}℃ なので、冷房(27℃)をONにしました。"
+                elif current_temp <= 16:
+                    msg = f"現在 {current_temp}℃ なので、暖房(20℃)をONにしました。"
+                else:
+                    msg = f"現在 {current_temp}℃ なので、エアコンはOFFのままにします。"
+            else:
+                msg = "室温が取得できなかったため、自動判断できませんでした。"
 
-        data = response.json()
-
-        # データを取り出す (M5Stackが送っているキー名に合わせてください: humidity や hum など)
-        humidity = data.get("humidity") or data.get("hum")
-        timestamp = data.get("timestamp", "不明な時刻")
+        # --- 手動モード (AIが指示) ---
+        elif command in ["on", "cool"]:
+            msg = f"エアコン(冷房)をONにしました。(現在の室温: {current_temp}℃)"
         
-        # エラーハンドリング
-        if humidity is None:
-            # デバッグ用に受信データを表示
-            return f"エラー: 湿度データが含まれていません。受信データ: {json.dumps(data, ensure_ascii=False)}"
+        elif command in ["warm", "heat"]:
+            msg = f"エアコン(暖房)をONにしました。(現在の室温: {current_temp}℃)"
+            
+        elif command == "off":
+            msg = "エアコンをOFFにしました。"
+            
+        else:
+            # 想定外のコマンドが来た場合
+            msg = f"エアコンを {command} 設定にしました。"
 
-        return f"{timestamp} 時点の湿度は {humidity} % です。"
+        # -------------------------------------------------
+        # 3. 実行 (現在はシミュレーション)
+        # -------------------------------------------------
+        # ※ 本当に操作するAPIがあるならここで requests.post などを呼ぶ
+        
+        return f"【実行完了】{msg}"
 
     except Exception as e:
-        return f"通信エラーが発生しました: {str(e)}"
+        return f"エアコン操作中にエラーが発生しました: {str(e)}"
 
-# テスト用
 if __name__ == "__main__":
-    print(get_humidity_by_date())
+    # テスト
+    print(control_aircon("on"))

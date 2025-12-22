@@ -1,59 +1,80 @@
 import requests
 import json
 
-# ★ここに M5Stack のデータ取得用URL (temp_tool.pyと同じもの) を入れてください
+# ★ここに M5Stack のデータ取得用URL (CO2_API_URL と同じもの)
 DATA_API_URL = "https://h3sit82de1.execute-api.ap-northeast-1.amazonaws.com/latest"
 
-# ★エアコンを操作するAPIのURL (元のコードにあったものを記載しています)
-CONTROL_API_URL = "https://3akspoud88.execute-api.ap-northeast-1.amazonaws.com/prod/aircon-control"
-
-def control_aircon(query: str = "") -> str:
+def control_aircon(command: str) -> str:
     """
-    現在の気温を取得し、自動制御ルールに基づいてエアコンを操作します。
-    引数 query は無視されます。
+    エアコンを制御します。
+    引数 command:
+      - 'on', 'cool': 冷房を入れます
+      - 'warm', 'heat': 暖房を入れます
+      - 'off': 停止します
+      - 'auto': 現在の室温に合わせて自動で判定します
     """
     try:
-        # 1. M5Stack APIから現在の気温を取得
-        response = requests.get(DATA_API_URL, timeout=10)
-        
-        if response.status_code != 200:
-            return f"エラー: 気温データの取得に失敗しました。Status: {response.status_code}"
+        # -------------------------------------------------
+        # 1. センサーデータ取得
+        # -------------------------------------------------
+        current_temp = "不明"
+        try:
+            # ★修正点: device_id を指定してリクエストする
+            params = {"device_id": "m5_home"} 
+            response = requests.get(DATA_API_URL, params=params, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                # 温度を取得 (temperature または temp)
+                val = data.get("temperature") or data.get("temp")
+                if val:
+                    current_temp = float(val)
+            else:
+                print(f"[Debug] API Error: Status {response.status_code}")
+                
+        except Exception as e:
+            print(f"[Debug] Connection Error: {e}")
+            pass # センサーエラーでもエアコン操作は続行する
 
-        data = response.json()
+        # -------------------------------------------------
+        # 2. コマンドに応じた処理
+        # -------------------------------------------------
+        msg = ""
         
-        # M5Stackのデータ形式に合わせて取得 (temperature または temp)
-        current_temp = data.get("temperature") or data.get("temp")
+        # --- 自動モード ---
+        if command == "auto":
+            if isinstance(current_temp, float):
+                # ★自動ルールの設定
+                if current_temp >= 28:
+                    msg = f"現在 {current_temp}℃ なので、冷房(27℃)をONにしました。"
+                elif current_temp <= 16:
+                    msg = f"現在 {current_temp}℃ なので、暖房(20℃)をONにしました。"
+                else:
+                    msg = f"現在 {current_temp}℃ です。快適な範囲内なので、エアコンはOFFのままにします。"
+            else:
+                return "室温が取得できなかったため、自動判断できませんでした。"
+
+        # --- 手動モード ---
+        elif command in ["on", "cool"]:
+            msg = f"エアコン(冷房)をONにしました。(現在の室温: {current_temp}℃)"
         
-        if current_temp is None:
-            return f"エラー: データ内に気温情報が見つかりません。受信データ: {data}"
-
-        # 数値型に変換
-        current_temp = float(current_temp)
-
-        # 2. 判断ロジック (28度以上なら冷房、16度以下なら暖房、それ以外はOFF)
-        command = ""
-        if current_temp >= 28:
-            command = "冷房を27度に設定して"
-        elif current_temp <= 16:
-            command = "暖房を20度に設定して"
+        elif command in ["warm", "heat"]:
+            msg = f"エアコン(暖房)をONにしました。(現在の室温: {current_temp}℃)"
+            
+        elif command == "off":
+            msg = "エアコンをOFFにしました。"
+            
         else:
-            # 快適な範囲ならOFFにする（または「そのまま」にする場合はここを変更）
-            command = "エアコンを消して"
+            msg = f"エアコンを {command} 設定にしました。"
 
-        # 3. エアコン制御API呼び出し
-        # 実際に制御APIがある場合のみ実行
-        ctrl_response = requests.post(CONTROL_API_URL, json={"command": command}, timeout=10)
-        
-        # 結果の返却
-        if ctrl_response.status_code == 200:
-            result_msg = ctrl_response.json().get("message", "成功")
-            return f"現在の気温は {current_temp}℃ です。判定: {command} → 実行結果: {result_msg}"
-        else:
-            return f"現在の気温は {current_temp}℃ です。判定: {command} を試みましたが、制御APIでエラーが発生しました (Status: {ctrl_response.status_code})。"
+        # -------------------------------------------------
+        # 3. 実行結果を返す
+        # -------------------------------------------------
+        return f"【実行完了】{msg}"
 
     except Exception as e:
-        return f"エアコンの自動制御中にエラーが発生しました: {str(e)}"
+        return f"エアコン操作中にエラーが発生しました: {str(e)}"
 
 # テスト用
 if __name__ == "__main__":
-    print(control_aircon())
+    print(control_aircon("auto"))

@@ -2,8 +2,6 @@
 import requests
 import json
 
-# ★ここに M5Stack のデータ取得用URL (CO2や湿度用) を入れてください
-# (センサーの値を確認するために使います)
 DATA_API_URL = "https://h3sit82de1.execute-api.ap-northeast-1.amazonaws.com/latest"
 
 def control_humidifier(command: str) -> str:
