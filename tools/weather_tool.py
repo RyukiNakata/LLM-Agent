@@ -1,26 +1,35 @@
 import requests
 import os
+from dotenv import load_dotenv # ★追加: .env読み込み用ライブラリ
 
-# @tool デコレータは削除します
-# from langchain_core.tools import tool  <-- これも削除でOK
+# ★追加: .envファイルを読み込む
+load_dotenv()
 
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
+
+# ★デバッグ用: 実行時にキーが読み込めているか確認（本番では消してもOK）
+if OPENWEATHER_API_KEY:
+    print("[Debug] Weather API Key loaded.")
+else:
+    print("[Debug] Weather API Key is MISSING!")
 
 def get_weather(input_text: str) -> str:
     """天気を取得する関数です。"""
 
+    # 都市名の判定
     if "岡山" in input_text or "Okayama" in input_text:
         city = "Okayama,JP"
     elif "," in input_text:
         city = input_text
     else:
-        # 都市名が曖昧または省略されている場合
+        # デフォルト
         city = "Okayama,JP"
 
-    # APIキーが設定されていない場合のエラーハンドリング
+    # APIキーがない場合のエラー処理
     if not OPENWEATHER_API_KEY:
-        return "エラー: OpenWeatherMap APIキーが設定されていません。"
+        return "エラー: OpenWeatherMap APIキーが .env から読み込めませんでした。"
 
+    # URL作成
     url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={OPENWEATHER_API_KEY}&units=metric&lang=ja"
 
     try:
