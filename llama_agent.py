@@ -11,12 +11,18 @@ from langchain_core.tools import tool
 # 既存ツール関数（あなたのプロジェクトのまま）
 from tools.weather_tool import get_weather
 from tools.calendar_tool import create_calendar_event_natural, get_calendar_events
-from tools.temp_tool import get_temperature_by_date
-from tools.humidity_tool import get_humidity_by_date
+# from tools.temp_tool import get_temperature_by_date
+# from tools.humidity_tool import get_humidity_by_date
 from tools.ac_tool import control_aircon
 from tools.humidifier_tool import control_humidifier
 from tools.co2_tool import get_co2_concentration
 from tools.date_tool import get_current_datetime
+from tools.sensor_tool import (
+    get_home_environment,
+    get_lab_environment,
+    get_home_heart_rate,
+    get_lab_heart_rate
+)
 
 
 # ------------------------------------------------------------
@@ -28,15 +34,15 @@ def tool_get_weather(location: str) -> str:
     """天気を取得するツール．location（例：Okayama）を受け取り天気文字列を返す．"""
     return get_weather(location)
 
-@tool
-def tool_get_temperature_by_date(date: str) -> str:
-    """室内の気温を取得するツール．date（例：2025-05-07）を受け取り気温文字列を返す．"""
-    return get_temperature_by_date(date)
+# @tool
+# def tool_get_temperature_by_date(date: str) -> str:
+#     """室内の気温を取得するツール．date（例：2025-05-07）を受け取り気温文字列を返す．"""
+#     return get_temperature_by_date(date)
 
-@tool
-def tool_get_humidity_by_date(date: str) -> str:
-    """室内の湿度を取得するツール．date（例：2025-05-07）を受け取り湿度文字列を返す．"""
-    return get_humidity_by_date(date)
+# @tool
+# def tool_get_humidity_by_date(date: str) -> str:
+#     """室内の湿度を取得するツール．date（例：2025-05-07）を受け取り湿度文字列を返す．"""
+#     return get_humidity_by_date(date)
 
 @tool
 def tool_get_calendar_events(query: str = "") -> str:
@@ -71,14 +77,18 @@ def tool_get_current_datetime(_: str = "") -> str:
 
 TOOLS = [
     tool_get_weather,
-    tool_get_temperature_by_date,
-    tool_get_humidity_by_date,
+    # tool_get_temperature_by_date,
+    # tool_get_humidity_by_date,
     tool_get_calendar_events,
     tool_create_calendar_event_natural,
     tool_control_aircon,
     tool_control_humidifier,
     tool_get_co2_concentration,
     tool_get_current_datetime,
+    get_home_environment,
+    get_lab_environment,
+    get_home_heart_rate,
+    get_lab_heart_rate,
 ]
 
 
