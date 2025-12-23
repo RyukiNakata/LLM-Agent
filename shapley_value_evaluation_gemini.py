@@ -25,7 +25,7 @@ def build_models() -> Dict[str, object]:
     """
     base_model_name = os.environ.get("OLLAMA_MODEL", "llama3.1")
     # ★変更: デフォルトモデルをGeminiに変更
-    target_model_name = os.environ.get("GOOGLE_MODEL", "gemini-2.0-flash-exp")
+    target_model_name = os.environ.get("GOOGLE_MODEL", "gemini-flash-latest")
 
     return {
         "base": ChatOllama(model=base_model_name),
@@ -158,7 +158,7 @@ def calculate_shapley_values(
 
 if __name__ == "__main__":
     print(f"base（Ollama）モデル：{os.environ.get('OLLAMA_MODEL', 'llama3.1')}")
-    print(f"target（Google）モデル：{os.environ.get('GOOGLE_MODEL', 'gemini-2.0-flash-exp')}")
+    print(f"target（Google）モデル：{os.environ.get('GOOGLE_MODEL', 'gemini-1.5-flash')}")
 
     scores = run_evaluation()
 
