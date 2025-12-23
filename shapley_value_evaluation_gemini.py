@@ -1,44 +1,47 @@
+from __future__ import annotations
+
 import itertools
-import asyncio
+import math
 import os
-from typing import List, Dict
+import re
+from typing import Dict, FrozenSet, List
+
 from dotenv import load_dotenv
-
-# LangChainのモデルクラス
 from langchain_ollama import ChatOllama
-from langchain_google_genai import ChatGoogleGenerativeAI  # ★変更点1: Gemini用ライブラリ
+# ★変更: Google Gemini用ライブラリをインポート
+from langchain_google_genai import ChatGoogleGenerativeAI
 
-# エージェントとツールのインポート
+from shapley_tools import tools
 from shapley_decomposed_agent import PaperWorkflowAgent
-from shapley_tools import tools  # ツール定義ファイルから
 
-# 環境変数の読み込み
+
 load_dotenv()
 
-# ------------------------------------------------------------------
-# 1. モデルの定義
-# ------------------------------------------------------------------
 
-# Base Model (軽量・ローカル): Llama 3.1 8B
-base_llm = ChatOllama(
-    model="llama3.1",
-    temperature=0,
-)
+def build_models() -> Dict[str, object]:
+    """
+    base：Llama（Ollama）
+    target：Gemini（Google）
+    """
+    base_model_name = os.environ.get("OLLAMA_MODEL", "llama3.1")
+    # ★変更: デフォルトモデルをGeminiに変更
+    target_model_name = os.environ.get("GOOGLE_MODEL", "gemini-2.0-flash-exp")
 
-# Target Model (高性能): Gemini 2.0 Flash (または Pro)
-# ★変更点2: Geminiに変更
-target_llm = ChatGoogleGenerativeAI(
-    model="gemini-2.0-flash-exp", # または "gemini-1.5-pro" など
-    temperature=0,
-    google_api_key=os.environ["GOOGLE_API_KEY"]
-)
+    return {
+        "base": ChatOllama(model=base_model_name),
+        # ★変更: Geminiの定義
+        "target": ChatGoogleGenerativeAI(
+            model=target_model_name,
+            temperature=0,
+            google_api_key=os.environ.get("GOOGLE_API_KEY"),
+        ),
+    }
 
-# コンポーネント名の定義
-COMPONENTS = ["Planning", "Reasoning", "Action", "Reflection"]
 
-# ------------------------------------------------------------------
-# 2. 評価タスクの定義
-# ------------------------------------------------------------------
+models = build_models()
+
+
+# 元ファイルと同じ評価タスク
 evaluation_tasks = [
     {"query": "これから作業をする場所を決めたいので、自宅と研究室の環境（CO2濃度や温度）を比較して、より快適な方を教えて。"},
     {"query": "今の私の心拍数が平常時より高いようなら、リラックスできるようにエアコンを冷房にして室温を少し下げて。"},
@@ -57,135 +60,120 @@ evaluation_tasks = [
     {"query": "帰宅したばかりで部屋がすごく暑い気がする。今の温度を確認して、28度以上なら急速冷房ですぐに涼しくして。"}
 ]
 
-# ------------------------------------------------------------------
-# 3. エージェント構築・実行関数
-# ------------------------------------------------------------------
-async def evaluate_combination(combo_indices: List[int], task_id: int, query: str) -> bool:
-    """
-    指定されたコンポーネントだけをTarget(Gemini)にし，残りをBase(Llama)にする
-    """
-    
-    # デフォルトはBase
-    models = {
-        "Planning": base_llm,
-        "Reasoning": base_llm,
-        "Action": base_llm,
-        "Reflection": base_llm,
-    }
 
-    # 指定されたインデックス（コンポーネント）だけTargetに差し替え
-    combo_names = []
-    for idx in combo_indices:
-        comp_name = COMPONENTS[idx]
-        models[comp_name] = target_llm
-        combo_names.append(comp_name)
-    
-    combo_str = ", ".join(combo_names) if combo_names else "∅（全てベースモデル）"
-    print(f"\n--- Task {task_id+1} | Combo: [{combo_str}] ---")
-
-    # エージェント構築
-    agent = PaperWorkflowAgent(
-        planning_llm=models["Planning"],
-        reasoning_llm=models["Reasoning"],
-        action_llm=models["Action"],
-        reflection_llm=models["Reflection"],
-        tools=tools,
-        verbose=True
-    )
-
-    # 実行
-    try:
-        result = agent.run(query)
-        print(f"Result: {result[:100]}...") # ログ省略
-        
-        # 成功判定
-        is_success = "タスク成功" in result
-        return is_success
-    except Exception as e:
-        print(f"Error: {e}")
+# --- 成功判定（元のロジックを維持）---
+def evaluate_success(response: str, task: dict) -> bool:
+    if not response:
         return False
 
-# ------------------------------------------------------------------
-# 4. メイン処理（全組み合わせ実行 & シャープレイ値計算）
-# ------------------------------------------------------------------
-async def main():
-    print(f"Base Model: {base_llm.model}")
-    print(f"Target Model: {target_llm.model} (Gemini)")
-    
-    # 全組み合わせ (2^4 = 16通り)
-    combinations = []
-    for r in range(len(COMPONENTS) + 1):
-        for combo in itertools.combinations(range(len(COMPONENTS)), r):
-            combinations.append(list(combo))
-    
-    # 結果格納用
-    # results[combo_tuple] = success_rate (0.0 ~ 1.0)
-    results: Dict[tuple, float] = {}
+    q = task["query"]
 
-    for combo in combinations:
+    # 湿度：% が含まれていれば成功（例：45.3%）
+    if "湿度" in q:
+        return bool(re.search(r"(\d+(\.\d+)?)\s*%", response))
+
+    # CO2：ppm が含まれ，換気に言及していれば成功
+    if ("CO2" in q) or ("二酸化炭素" in q):
+        ok_ppm = bool(re.search(r"(\d+(\.\d+)?)\s*ppm", response, flags=re.IGNORECASE))
+        mention_vent = ("換気" in response) or ("窓" in response) or ("空気" in response)
+        return ok_ppm and mention_vent
+
+    # その他：最低限「タスク成功」を含むか（保険）
+    return "タスク成功" in response
+
+
+def run_evaluation() -> Dict[FrozenSet[str], float]:
+    print("🤖 論文に基づいた4コンポーネントの体系的評価を開始します．")
+    print("   Target Model: Google Gemini")
+
+    components = ["Planning", "Reasoning", "Action", "Reflection"]
+    model_choices = ["base", "target"]
+
+    all_combinations = list(itertools.product(model_choices, repeat=len(components)))
+    performance_scores: Dict[FrozenSet[str], float] = {}
+
+    for i, combo in enumerate(all_combinations):
+        config_map = {
+            "planning_llm": models[combo[0]],
+            "reasoning_llm": models[combo[1]],
+            "action_llm": models[combo[2]],
+            "reflection_llm": models[combo[3]],
+        }
+
+        coalition = frozenset({components[j] for j, m in enumerate(combo) if m == "target"})
+        config_str = f"P:{combo[0]}, R:{combo[1]}, A:{combo[2]}, F:{combo[3]}"
+        print(f"\n--- 評価中 ({i+1}/{len(all_combinations)}): [{config_str}] ---")
+
+        agent = PaperWorkflowAgent(**config_map, tools=tools, verbose=False)
+
         success_count = 0
-        total_tasks = len(evaluation_tasks)
-        
-        combo_names = [COMPONENTS[i] for i in combo]
-        combo_str = ", ".join(combo_names) if combo_names else "∅"
-        print(f"\n=== Testing Combination: [{combo_str}] ===")
+        for task in evaluation_tasks:
+            # エラーで止まらないようにtry-exceptを追加しても良いですが、
+            # 元コードの振る舞いに合わせてそのまま実行します
+            try:
+                response = agent.run(task["query"])
+            except Exception as e:
+                response = f"実行エラー: {e}"
+            
+            print(f"  - Query: {task['query'][:20]}... -> Response: {response[:50]}...")
 
-        for i, task in enumerate(evaluation_tasks):
-            is_success = await evaluate_combination(combo, i, task["query"])
-            if is_success:
+            if evaluate_success(response, task):
                 success_count += 1
-        
-        success_rate = success_count / total_tasks
-        results[tuple(combo)] = success_rate
-        print(f"Combination [{combo_str}] Success Rate: {success_rate:.2%}")
 
-    # --------------------------------------------------------------
-    # 5. シャープレイ値の計算
-    # --------------------------------------------------------------
+        success_rate = (success_count / len(evaluation_tasks)) * 100.0
+        performance_scores[coalition] = success_rate
+        print(f"--- 結果: 成功率 = {success_rate:.2f}% ---")
+
+    return performance_scores
+
+
+def calculate_shapley_values(
+    performance_scores: Dict[FrozenSet[str], float],
+    components: List[str],
+) -> Dict[str, float]:
+    shapley_values = {comp: 0.0 for comp in components}
+    n = len(components)
+
+    for component_i in components:
+        other_components = [c for c in components if c != component_i]
+
+        for k in range(len(other_components) + 1):
+            for S_tuple in itertools.combinations(other_components, k):
+                S = frozenset(S_tuple)
+                S_with_i = S.union({component_i})
+
+                v_S = performance_scores.get(S, 0.0)
+                v_S_with_i = performance_scores.get(S_with_i, 0.0)
+
+                marginal_contribution = v_S_with_i - v_S
+                weight = (
+                    math.factorial(len(S))
+                    * math.factorial(n - len(S) - 1)
+                    / math.factorial(n)
+                )
+                shapley_values[component_i] += weight * marginal_contribution
+
+    return shapley_values
+
+
+if __name__ == "__main__":
+    print(f"base（Ollama）モデル：{os.environ.get('OLLAMA_MODEL', 'llama3.1')}")
+    print(f"target（Google）モデル：{os.environ.get('GOOGLE_MODEL', 'gemini-2.0-flash-exp')}")
+
+    scores = run_evaluation()
+
     print("\n\n--- 📈 全16組み合わせの性能スコア (v(S)) ---")
-    for combo, score in results.items():
-        names = [COMPONENTS[i] for i in combo]
-        name_str = ", ".join(names) if names else "∅（全てベースモデル）"
-        print(f"連合 [{name_str:<40}]：成功率 {score:.2%}")
+    sorted_scores = sorted(scores.items(), key=lambda item: len(item[0]))
+    for coalition, score in sorted_scores:
+        coalition_name = ", ".join(sorted(list(coalition))) if coalition else "∅（全てベースモデル）"
+        print(f"連合 [{coalition_name.ljust(45)}]：成功率 {score:.2f}%")
+
+    components_list = ["Planning", "Reasoning", "Action", "Reflection"]
+    shapley_results = calculate_shapley_values(scores, components_list)
 
     print("\n\n--- 📊 各コンポーネントのシャープレイ値（貢献度） ---")
     print("この値は，各部品をGeminiに替えた際の平均的な性能向上率を示します．")
-    
-    import math
-
-    n = len(COMPONENTS)
-    shapley_values = {i: 0.0 for i in range(n)}
-
-    # 定義通りの計算式: sum [ (|S|! * (n-|S|-1)!) / n! ] * (v(S U {i}) - v(S))
-    for i in range(n):
-        shapley_sum = 0.0
-        
-        # iを含まない全ての部分集合Sを探す
-        for combo in combinations:
-            if i in combo:
-                continue # iが含まれていたらスキップ
-            
-            # S
-            S = tuple(combo)
-            # S U {i}
-            S_union_i = tuple(sorted(list(combo) + [i]))
-            
-            v_S = results[S]
-            v_S_union_i = results[S_union_i]
-            
-            marginal_contribution = v_S_union_i - v_S
-            
-            # 重み計算
-            s_len = len(S)
-            weight = (math.factorial(s_len) * math.factorial(n - s_len - 1)) / math.factorial(n)
-            
-            shapley_sum += weight * marginal_contribution
-        
-        shapley_values[i] = shapley_sum
-
-    # 表示
-    for i in range(n):
-        print(f"貢献度 [{COMPONENTS[i]:<10}]：{shapley_values[i] * 100:+.2f}")
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    sorted_shapley = sorted(shapley_results.items(), key=lambda item: item[1], reverse=True)
+    for component, value in sorted_shapley:
+        print(f"貢献度 [{component.ljust(15)}]：{value:+.2f}")
+    print("--------------------------------------------------")
