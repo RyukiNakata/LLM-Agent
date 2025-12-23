@@ -3,13 +3,15 @@ from __future__ import annotations
 import itertools
 import math
 import os
-import re
+import time
 from typing import Dict, FrozenSet, List
 
 from dotenv import load_dotenv
 from langchain_ollama import ChatOllama
-# ★変更: Google Gemini用ライブラリをインポート
+# Agent用: Gemini
 from langchain_google_genai import ChatGoogleGenerativeAI
+# Judge用: GPT
+from langchain_openai import ChatOpenAI
 
 from shapley_tools import tools
 from shapley_decomposed_agent import PaperWorkflowAgent
@@ -17,19 +19,20 @@ from shapley_decomposed_agent import PaperWorkflowAgent
 
 load_dotenv()
 
-
-def build_models() -> Dict[str, object]:
+# ------------------------------------------------------------------
+# 1. エージェント用モデルの定義 (Base: Llama, Target: Gemini)
+# ------------------------------------------------------------------
+def build_agent_models() -> Dict[str, object]:
     """
     base：Llama（Ollama）
     target：Gemini（Google）
     """
     base_model_name = os.environ.get("OLLAMA_MODEL", "llama3.1")
-    # ★変更: デフォルトモデルをGeminiに変更
+    # Gemini (リストにあった確実に動くエイリアスを使用)
     target_model_name = os.environ.get("GOOGLE_MODEL", "gemini-flash-latest")
 
     return {
         "base": ChatOllama(model=base_model_name),
-        # ★変更: Geminiの定義
         "target": ChatGoogleGenerativeAI(
             model=target_model_name,
             temperature=0,
@@ -37,11 +40,20 @@ def build_models() -> Dict[str, object]:
         ),
     }
 
+agent_models = build_agent_models()
 
-models = build_models()
+# ------------------------------------------------------------------
+# 2. 判定用モデルの定義 (Judge: GPT-4o)
+# ------------------------------------------------------------------
+judge_llm = ChatOpenAI(
+    model="gpt-4o", # 判定には賢いモデルを使う
+    temperature=0,
+    api_key=os.environ.get("OPENAI_API_KEY")
+)
 
-
-# 元ファイルと同じ評価タスク
+# ------------------------------------------------------------------
+# 3. 評価タスク
+# ------------------------------------------------------------------
 evaluation_tasks = [
     {"query": "これから作業をする場所を決めたいので、自宅と研究室の環境（CO2濃度や温度）を比較して、より快適な方を教えて。"},
     {"query": "今の私の心拍数が平常時より高いようなら、リラックスできるようにエアコンを冷房にして室温を少し下げて。"},
@@ -60,31 +72,56 @@ evaluation_tasks = [
     {"query": "帰宅したばかりで部屋がすごく暑い気がする。今の温度を確認して、28度以上なら急速冷房ですぐに涼しくして。"}
 ]
 
-
-# --- 成功判定（元のロジックを維持）---
+# ------------------------------------------------------------------
+# 4. GPTによる成功判定関数
+# ------------------------------------------------------------------
 def evaluate_success(response: str, task: dict) -> bool:
     if not response:
         return False
 
-    q = task["query"]
+    query = task["query"]
+    
+    # 判定用プロンプト
+    prompt = f"""
+    あなたはIoTエージェントの動作評価者です。
+    以下の「ユーザーの要求」に対して、「エージェントの回答」が適切かどうかを厳格に判定してください。
 
-    # 湿度：% が含まれていれば成功（例：45.3%）
-    if "湿度" in q:
-        return bool(re.search(r"(\d+(\.\d+)?)\s*%", response))
+    ### ユーザーの要求
+    {query}
 
-    # CO2：ppm が含まれ，換気に言及していれば成功
-    if ("CO2" in q) or ("二酸化炭素" in q):
-        ok_ppm = bool(re.search(r"(\d+(\.\d+)?)\s*ppm", response, flags=re.IGNORECASE))
-        mention_vent = ("換気" in response) or ("窓" in response) or ("空気" in response)
-        return ok_ppm and mention_vent
+    ### エージェントの回答
+    {response}
 
-    # その他：最低限「タスク成功」を含むか（保険）
-    return "タスク成功" in response
+    ### 判定基準
+    1. 要求された情報（数値や状態）が含まれているか？（例：「温度を教えて」に対し「25度です」と答えているか）
+    2. 条件付きの指示（もし〇〇なら××して）に対し、条件判定を行った形跡があるか？
+    3. 実行エラーや「できませんでした」という内容で終わっていないか？
+    4. 最終的にユーザーの目的が達成されたか？
 
+    ### 出力形式
+    成功の場合は "SUCCESS" 、失敗の場合は "FAILURE" とだけ出力してください。余計な文章は不要です。
+    """
 
+    try:
+        # GPT-4oに判定させる
+        judgment = judge_llm.invoke(prompt).content.strip()
+        
+        # 結果のログ出し
+        is_success = "SUCCESS" in judgment
+        # print(f"    [Judge: {judgment}]") # デバッグ用
+        return is_success
+        
+    except Exception as e:
+        print(f"    [Judge Error] {e}")
+        return False
+
+# ------------------------------------------------------------------
+# 5. 評価実行ループ
+# ------------------------------------------------------------------
 def run_evaluation() -> Dict[FrozenSet[str], float]:
     print("🤖 論文に基づいた4コンポーネントの体系的評価を開始します．")
     print("   Target Model: Google Gemini")
+    print("   Judge Model : OpenAI GPT-4o")
 
     components = ["Planning", "Reasoning", "Action", "Reflection"]
     model_choices = ["base", "target"]
@@ -94,10 +131,10 @@ def run_evaluation() -> Dict[FrozenSet[str], float]:
 
     for i, combo in enumerate(all_combinations):
         config_map = {
-            "planning_llm": models[combo[0]],
-            "reasoning_llm": models[combo[1]],
-            "action_llm": models[combo[2]],
-            "reflection_llm": models[combo[3]],
+            "planning_llm": agent_models[combo[0]],
+            "reasoning_llm": agent_models[combo[1]],
+            "action_llm": agent_models[combo[2]],
+            "reflection_llm": agent_models[combo[3]],
         }
 
         coalition = frozenset({components[j] for j, m in enumerate(combo) if m == "target"})
@@ -108,17 +145,20 @@ def run_evaluation() -> Dict[FrozenSet[str], float]:
 
         success_count = 0
         for task in evaluation_tasks:
-            # エラーで止まらないようにtry-exceptを追加しても良いですが、
-            # 元コードの振る舞いに合わせてそのまま実行します
             try:
                 response = agent.run(task["query"])
             except Exception as e:
                 response = f"実行エラー: {e}"
             
-            print(f"  - Query: {task['query'][:20]}... -> Response: {response[:50]}...")
+            # ログ表示（少し短縮）
+            clean_res = response.replace('\n', ' ')[:60]
+            print(f"  - Q: {task['query'][:15]}... -> A: {clean_res}...")
 
+            # GPTによる判定
             if evaluate_success(response, task):
                 success_count += 1
+
+            time.sleep(20)
 
         success_rate = (success_count / len(evaluation_tasks)) * 100.0
         performance_scores[coalition] = success_rate
@@ -126,7 +166,9 @@ def run_evaluation() -> Dict[FrozenSet[str], float]:
 
     return performance_scores
 
-
+# ------------------------------------------------------------------
+# 6. シャープレイ値計算 (変更なし)
+# ------------------------------------------------------------------
 def calculate_shapley_values(
     performance_scores: Dict[FrozenSet[str], float],
     components: List[str],
@@ -157,9 +199,6 @@ def calculate_shapley_values(
 
 
 if __name__ == "__main__":
-    print(f"base（Ollama）モデル：{os.environ.get('OLLAMA_MODEL', 'llama3.1')}")
-    print(f"target（Google）モデル：{os.environ.get('GOOGLE_MODEL', 'gemini-1.5-flash')}")
-
     scores = run_evaluation()
 
     print("\n\n--- 📈 全16組み合わせの性能スコア (v(S)) ---")
