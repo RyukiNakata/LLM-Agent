@@ -128,7 +128,7 @@ def _build_agent(mode: str = "zero"):
     load_dotenv()
 
     llm = ChatOpenAI(
-        model=os.environ.get("OPENAI_MODEL", "gpt-4"), # モデル名は適宜環境に合わせてください
+        model=os.environ.get("OPENAI_MODEL", "gpt-4o"), # モデル名は適宜環境に合わせてください
         temperature=0,
     )
 
