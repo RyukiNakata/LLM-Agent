@@ -8,53 +8,110 @@ from typing import Dict, FrozenSet, List
 
 from dotenv import load_dotenv
 from langchain_ollama import ChatOllama
-# Agent用: Gemini
-from langchain_google_genai import ChatGoogleGenerativeAI
-# Judge用: GPT
 from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import SystemMessage, HumanMessage
 
 from shapley_tools import tools
 from shapley_decomposed_agent import PaperWorkflowAgent
 
-
 load_dotenv()
 
+# =================================================================
+# ⚙️ 設定
+# =================================================================
+BASE_MODEL_NAME = os.environ.get("OLLAMA_MODEL_BASE", "llama3.1")
+TARGET_MODEL_NAME = "models/gemma-3-27b-it"
+NUM_TEST_TASKS = 50
+
+print(f"🔧 Config: Base={BASE_MODEL_NAME} (Local), Target={TARGET_MODEL_NAME} (Google GenAI API)")
+# =================================================================
+
+
+# =================================================================
+# ★修正箇所: Gemma対応版 自動リトライ機能
+# =================================================================
+def robust_invoke_llm(self, llm, system, user):
+    max_retries = 6 
+    base_wait = 10 
+    
+    # モデル名を取得して、Gemmaかどうか判定
+    model_name = getattr(llm, "model", "")
+    is_gemma = "gemma" in model_name.lower()
+
+    for attempt in range(max_retries):
+        try:
+            # -------------------------------------------------
+            # Gemma対策: System PromptをUser Promptに結合する
+            # -------------------------------------------------
+            if is_gemma:
+                # System Prompt非対応のため、テキストとして結合
+                merged_content = f"Instructions:\n{system}\n\nUser Input:\n{user}"
+                messages = [HumanMessage(content=merged_content)]
+            else:
+                # GeminiやGPTなど通常の場合は分ける
+                messages = [SystemMessage(content=system), HumanMessage(content=user)]
+            
+            # 実行
+            resp = llm.invoke(messages)
+            return getattr(resp, "content", str(resp))
+        
+        except Exception as e:
+            err_msg = str(e)
+            # レート制限(429)やサーバーエラー(500系)はリトライ
+            if "429" in err_msg or "ResourceExhausted" in err_msg or "500" in err_msg or "503" in err_msg:
+                wait_time = base_wait * (2 ** attempt)
+                print(f"\n⚠️ API制限/エラー発生。{wait_time}秒待機してリトライ... ({attempt+1}/{max_retries})")
+                time.sleep(wait_time)
+            # 今回の「400 INVALID_ARGUMENT」など、リトライしても直らないエラーは即停止
+            elif "INVALID_ARGUMENT" in err_msg:
+                raise Exception(f"設定エラー（Gemma非対応機能など）: {err_msg}")
+            else:
+                raise e
+
+    raise Exception("APIレート制限により、リトライ回数の上限に達しました。")
+
+# モンキーパッチ適用
+PaperWorkflowAgent._invoke_llm = robust_invoke_llm
+# =================================================================
+
+
 # ------------------------------------------------------------------
-# 1. エージェント用モデルの定義 (Base: Llama, Target: Gemini)
+# 1. エージェント用モデルの定義
 # ------------------------------------------------------------------
 def build_agent_models() -> Dict[str, object]:
-    """
-    base：Llama（Ollama）
-    target：Gemini（Google）
-    """
-    base_model_name = os.environ.get("OLLAMA_MODEL", "llama3.1")
-    # Gemini (リストにあった確実に動くエイリアスを使用)
-    target_model_name = os.environ.get("GOOGLE_MODEL", "gemini-2.5-flash")
+    if not os.environ.get("GOOGLE_API_KEY"):
+        raise ValueError("❌ .env に GOOGLE_API_KEY が設定されていません。")
 
     return {
-        "base": ChatOllama(model=base_model_name),
+        "base": ChatOllama(
+            model=BASE_MODEL_NAME,
+            temperature=0,
+        ),
         "target": ChatGoogleGenerativeAI(
-            model=target_model_name,
+            model=TARGET_MODEL_NAME,
             temperature=0,
             google_api_key=os.environ.get("GOOGLE_API_KEY"),
+            max_retries=5,
         ),
     }
 
 agent_models = build_agent_models()
 
 # ------------------------------------------------------------------
-# 2. 判定用モデルの定義 (Judge: GPT-4o)
+# 2. 判定用モデル (Judge)
 # ------------------------------------------------------------------
 judge_llm = ChatOpenAI(
-    model="gpt-4o", # 判定には賢いモデルを使う
+    model="gpt-4o", 
     temperature=0,
     api_key=os.environ.get("OPENAI_API_KEY")
 )
 
 # ------------------------------------------------------------------
-# 3. 評価タスク
+# 3. 評価タスク (全50件)
 # ------------------------------------------------------------------
-evaluation_tasks = [
+all_evaluation_tasks = [
+    # --- 既存のタスク (1-15) ---
     {"query": "これから作業をする場所を決めたいので、自宅と研究室の環境（CO2濃度や温度）を比較して、より快適な方を教えて。"},
     {"query": "今の私の心拍数が平常時より高いようなら、リラックスできるようにエアコンを冷房にして室温を少し下げて。"},
     {"query": "次の会議の開始時間を確認して、その時刻までに部屋が快適な温度になるように、今からエアコンを調整しておいて。"},
@@ -110,45 +167,36 @@ evaluation_tasks = [
     {"query": "私の心拍数が高いのに、部屋も暑い（28度以上）なら危険。緊急で冷房をつけて、水分補給をするようカレンダーに「水」と入れて。" }
 ]
 
+evaluation_tasks = all_evaluation_tasks[:NUM_TEST_TASKS]
+
 # ------------------------------------------------------------------
 # 4. GPTによる成功判定関数
 # ------------------------------------------------------------------
 def evaluate_success(response: str, task: dict) -> bool:
     if not response:
         return False
-
     query = task["query"]
-    
-    # 判定用プロンプト
     prompt = f"""
     あなたはIoTエージェントの動作評価者です。
     以下の「ユーザーの要求」に対して、「エージェントの回答」が適切かどうかを厳格に判定してください。
-
     ### ユーザーの要求
     {query}
-
     ### エージェントの回答
     {response}
-
     ### 判定基準
-    1. 要求された情報（数値や状態）が含まれているか？（例：「温度を教えて」に対し「25度です」と答えているか）
-    2. 条件付きの指示（もし〇〇なら××して）に対し、条件判定を行った形跡があるか？
+    1. 要求された情報（数値や状態）が含まれているか？
+    2. 条件付きの指示に対し、条件判定を行った形跡があるか？
     3. 実行エラーや「できませんでした」という内容で終わっていないか？
     4. 最終的にユーザーの目的が達成されたか？
-
     ### 出力形式
-    成功の場合は "SUCCESS" 、失敗の場合は "FAILURE" とだけ出力してください。余計な文章は不要です。
+    成功の場合は "SUCCESS" 、失敗の場合は "FAILURE" とだけ出力してください。
     """
-
     try:
-        # GPT-4oに判定させる
         judgment = judge_llm.invoke(prompt).content.strip()
-        
-        # 結果のログ出し
         is_success = "SUCCESS" in judgment
-        # print(f"    [Judge: {judgment}]") # デバッグ用
+        judge_icon = "✅ SUCCESS" if is_success else "❌ FAILURE"
+        print(f"    └─ Judge: {judge_icon}")
         return is_success
-        
     except Exception as e:
         print(f"    [Judge Error] {e}")
         return False
@@ -157,13 +205,14 @@ def evaluate_success(response: str, task: dict) -> bool:
 # 5. 評価実行ループ
 # ------------------------------------------------------------------
 def run_evaluation() -> Dict[FrozenSet[str], float]:
-    print("🤖 論文に基づいた4コンポーネントの体系的評価を開始します．")
-    print("   Target Model: Google Gemini")
-    print("   Judge Model : OpenAI GPT-4o")
+    print("🤖 Google GenAI (Gemma) による評価を開始します．")
+    print(f"   Base Model  : {BASE_MODEL_NAME} (Ollama Local)")
+    print(f"   Target Model: {TARGET_MODEL_NAME} (Google GenAI)")
+    print(f"   Judge Model : GPT-4o")
+    print(f"   Tasks       : {len(evaluation_tasks)} tasks")
 
     components = ["Planning", "Reasoning", "Action", "Reflection"]
     model_choices = ["base", "target"]
-
     all_combinations = list(itertools.product(model_choices, repeat=len(components)))
     performance_scores: Dict[FrozenSet[str], float] = {}
 
@@ -178,63 +227,51 @@ def run_evaluation() -> Dict[FrozenSet[str], float]:
         coalition = frozenset({components[j] for j, m in enumerate(combo) if m == "target"})
         config_str = f"P:{combo[0]}, R:{combo[1]}, A:{combo[2]}, F:{combo[3]}"
         print(f"\n--- 評価中 ({i+1}/{len(all_combinations)}): [{config_str}] ---")
+        
+        # APIレート制限対策で少し待つ
+        time.sleep(1)
 
         agent = PaperWorkflowAgent(**config_map, tools=tools, verbose=False)
 
         success_count = 0
-        for task in evaluation_tasks:
+        for idx, task in enumerate(evaluation_tasks):
+            print(f"  Task ({idx+1}/{len(evaluation_tasks)}): {task['query'][:10]}...")
             try:
                 response = agent.run(task["query"])
             except Exception as e:
                 response = f"実行エラー: {e}"
+                print(f"    ⚠️ Error: {e}")
             
-            # ログ表示（少し短縮）
             clean_res = response.replace('\n', ' ')[:60]
-            print(f"  - Q: {task['query'][:15]}... -> A: {clean_res}...")
+            print(f"    -> Agent: {clean_res}...")
 
-            # GPTによる判定
             if evaluate_success(response, task):
                 success_count += 1
-
-            time.sleep(20)
-
+            
         success_rate = (success_count / len(evaluation_tasks)) * 100.0
         performance_scores[coalition] = success_rate
-        print(f"--- 結果: 成功率 = {success_rate:.2f}% ---")
+        print(f"--- 結果: 成功率 = {success_rate:.2f}% ({success_count}/{len(evaluation_tasks)}) ---")
 
     return performance_scores
 
 # ------------------------------------------------------------------
-# 6. シャープレイ値計算 (変更なし)
+# 6. シャープレイ値計算
 # ------------------------------------------------------------------
-def calculate_shapley_values(
-    performance_scores: Dict[FrozenSet[str], float],
-    components: List[str],
-) -> Dict[str, float]:
+def calculate_shapley_values(performance_scores: Dict[FrozenSet[str], float], components: List[str]) -> Dict[str, float]:
     shapley_values = {comp: 0.0 for comp in components}
     n = len(components)
-
     for component_i in components:
         other_components = [c for c in components if c != component_i]
-
         for k in range(len(other_components) + 1):
             for S_tuple in itertools.combinations(other_components, k):
                 S = frozenset(S_tuple)
                 S_with_i = S.union({component_i})
-
                 v_S = performance_scores.get(S, 0.0)
                 v_S_with_i = performance_scores.get(S_with_i, 0.0)
-
                 marginal_contribution = v_S_with_i - v_S
-                weight = (
-                    math.factorial(len(S))
-                    * math.factorial(n - len(S) - 1)
-                    / math.factorial(n)
-                )
+                weight = (math.factorial(len(S)) * math.factorial(n - len(S) - 1) / math.factorial(n))
                 shapley_values[component_i] += weight * marginal_contribution
-
     return shapley_values
-
 
 if __name__ == "__main__":
     scores = run_evaluation()
@@ -249,7 +286,7 @@ if __name__ == "__main__":
     shapley_results = calculate_shapley_values(scores, components_list)
 
     print("\n\n--- 📊 各コンポーネントのシャープレイ値（貢献度） ---")
-    print("この値は，各部品をGeminiに替えた際の平均的な性能向上率を示します．")
+    print(f"Targetモデル: {TARGET_MODEL_NAME} (Google GenAI)")
     sorted_shapley = sorted(shapley_results.items(), key=lambda item: item[1], reverse=True)
     for component, value in sorted_shapley:
         print(f"貢献度 [{component.ljust(15)}]：{value:+.2f}")
