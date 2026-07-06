@@ -6,7 +6,7 @@
 ## 前提・共通ルール
 
 - 作業ディレクトリは常に**リポジトリルート** `iot-llm-agents/` とする。
-- 仮想環境を有効化: `source llmagent/bin/activate`
+- 仮想環境を有効化: `source .venv/bin/activate`
 - 実行は必ず `python -m <pkg.module>`（ルートから）。`python app/main.py` 形式は
   `from tools.X` / 相対import が壊れるので**禁止**。
 - 判断確定事項:

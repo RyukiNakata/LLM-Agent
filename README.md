@@ -18,18 +18,18 @@
 
 ### 1. 仮想環境の有効化
 
-本リポジトリでは `llmagent`（Python 3.10）を使用します。
+本リポジトリでは `.venv`（Python 3.10）を使用します。
 
 ```bash
-source llmagent/bin/activate
+source .venv/bin/activate
 ```
 
 新規に作る場合:
 
 ```bash
-python3 -m venv llmagent
-source llmagent/bin/activate
-pip install -r requirements.txt        # 整理後は requirements.proposed.txt を参照
+python3.10 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.proposed.txt
 ```
 
 ### 2. 環境変数 (.env) の設定
