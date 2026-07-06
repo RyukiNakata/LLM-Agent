@@ -12,8 +12,8 @@ from langchain_ollama import ChatOllama
 # 判定用: 評価の公平性を保つためGPT-4oを推奨（ローカルも可能）
 from langchain_openai import ChatOpenAI
 
-from shapley_tools import tools
-from shapley_decomposed_agent import PaperWorkflowAgent
+from .core.shapley_tools import tools
+from .core.decomposed_agent import PaperWorkflowAgent
 
 load_dotenv()
 

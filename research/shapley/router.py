@@ -6,8 +6,8 @@ from langchain_ollama import ChatOllama
 from langchain_anthropic import ChatAnthropic
 
 # ツールとエージェント本体のみインポート
-from shapley_tools import tools
-from shapley_decomposed_agent import PaperWorkflowAgent
+from .core.shapley_tools import tools
+from .core.decomposed_agent import PaperWorkflowAgent
 
 load_dotenv()
 

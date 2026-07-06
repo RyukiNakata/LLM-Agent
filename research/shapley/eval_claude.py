@@ -15,8 +15,8 @@ from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
-from shapley_tools import tools
-from shapley_decomposed_agent import PaperWorkflowAgent
+from .core.shapley_tools import tools
+from .core.decomposed_agent import PaperWorkflowAgent
 
 
 load_dotenv()

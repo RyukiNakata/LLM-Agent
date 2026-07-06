@@ -10,8 +10,8 @@ from dotenv import load_dotenv
 from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
 
-from shapley_tools import tools
-from shapley_decomposed_agent import PaperWorkflowAgent
+from .core.shapley_tools import tools
+from .core.decomposed_agent import PaperWorkflowAgent
 
 load_dotenv()
 

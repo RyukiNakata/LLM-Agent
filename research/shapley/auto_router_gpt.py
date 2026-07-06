@@ -12,8 +12,8 @@ from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
 
 # ユーザー環境の自作モジュール (これらが同じ階層にある前提です)
-from shapley_tools import tools
-from shapley_decomposed_agent import PaperWorkflowAgent
+from .core.shapley_tools import tools
+from .core.decomposed_agent import PaperWorkflowAgent
 
 # 環境変数の読み込み (強制上書き設定)
 load_dotenv(override=True)
