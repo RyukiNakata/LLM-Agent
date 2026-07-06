@@ -1,4 +1,4 @@
-# AIAgents
+# iot-llm-agents
 
 家電・カレンダーを制御する LangChain エージェントと、Shapley 値による
 マルチLLM 貢献度評価・ルーティングの実験コード群。
