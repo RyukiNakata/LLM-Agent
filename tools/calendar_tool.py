@@ -1,7 +1,7 @@
 from datetime import datetime
 # @tool は削除します
 from langchain_openai import ChatOpenAI
-from google_calendar_api import get_upcoming_events, add_event
+from integrations.google_calendar_api import get_upcoming_events, add_event
 import os
 
 # --- 変更点: @tool を削除し、ダミー引数 query を追加 ---
