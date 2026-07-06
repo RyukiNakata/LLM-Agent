@@ -1,4 +1,4 @@
-from llama_agent import run_agent
+from app.llama_agent import run_agent
 
 if __name__ == "__main__":
     user_input = input("あなたの相談内容を入力してください：\n> ")

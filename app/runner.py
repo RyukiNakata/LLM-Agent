@@ -1,5 +1,5 @@
 import time
-from agent import run_agent
+from app.agent import run_agent
 
 def run_fixed_query_loop(interval_minutes=2):
     print(" 初回のみクエリを入力してください。その後、15分おきに同じ内容を自動実行します。")
